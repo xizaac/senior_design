@@ -28,3 +28,6 @@ export const nextHand = (sessionCode, winningSeat) =>
 
 export const undoAction = (sessionCode) =>
   api.post("/game/undo", { sessionCode });
+
+export const buyback = (sessionCode, seat, chipAmount) =>
+  api.post("/game/buyback", { sessionCode, seat, chipAmount });

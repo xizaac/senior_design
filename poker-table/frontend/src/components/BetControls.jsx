@@ -10,9 +10,9 @@ const ACTIONS = [
 
 /**
  * BetControls — dealer control panel for a single player seat.
- * Props: player, sessionCode, onUpdate(updatedSession), isActiveTurn, currentBet
+ * Props: player, sessionCode, onUpdate(updatedSession), isActiveTurn, currentBet, players
  */
-const BetControls = ({ player, sessionCode, onUpdate, isActiveTurn = false, currentBet = 0 }) => {
+const BetControls = ({ player, sessionCode, onUpdate, isActiveTurn = false, currentBet = 0, players = [] }) => {
   const [raiseAmount, setRaiseAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -36,15 +36,34 @@ const BetControls = ({ player, sessionCode, onUpdate, isActiveTurn = false, curr
   };
 
   const isFolded = player.action === "fold" || !player.isActive;
-  const canCheck = currentBet === 0 || player.bet === currentBet;
+  
+  // Check validation with all-in consideration (Issue 1)
+  const anyoneAllIn = players.some(p => p.action === "all-in" && p.isActive);
+  const canCheck = (currentBet === 0 || player.bet === currentBet) && !anyoneAllIn;
   const isCheckDisabled = !canCheck;
+  const checkDisabledReason = anyoneAllIn 
+    ? "A player is all-in" 
+    : player.bet < currentBet 
+    ? "Must match current bet first"
+    : "";
+
+  // Determine active turn styling (Issue 5)
+  const isActive = isActiveTurn && !isFolded;
 
   return (
     <div
-      className="rounded-xl p-3 space-y-2"
+      className="rounded-xl p-3 space-y-2 transition-all duration-300"
       style={{
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid rgba(255,255,255,0.08)",
+        background: isActive 
+          ? "rgba(212,168,67,0.07)" 
+          : "rgba(255,255,255,0.04)",
+        border: isActive 
+          ? "1px solid rgba(212,168,67,0.3)" 
+          : "1px solid rgba(255,255,255,0.08)",
+        borderLeft: isActive 
+          ? "4px solid #d4a843" 
+          : "1px solid rgba(255,255,255,0.08)",
+        opacity: !isActiveTurn && !isFolded ? 0.5 : 1,
       }}
     >
       <div className="flex items-center justify-between">
@@ -53,10 +72,13 @@ const BetControls = ({ player, sessionCode, onUpdate, isActiveTurn = false, curr
         </span>
         {player.action && player.action !== "waiting" && (
           <span
-            className={`text-xs font-mono px-2 py-0.5 rounded ${
-              isFolded ? "bg-gray-700 text-gray-400" : "bg-gold-400/20 text-gold-300"
-            }`}
-            style={{ color: isFolded ? undefined : "#d4a843" }}
+            className="text-xs font-mono px-1.5 py-0.5 rounded"
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              color: isFolded ? "rgba(255,255,255,0.3)" : "#d4a843",
+              border: "1px solid rgba(255,255,255,0.1)",
+              fontSize: "0.65rem",
+            }}
           >
             {player.action.toUpperCase()}
           </span>
@@ -74,15 +96,20 @@ const BetControls = ({ player, sessionCode, onUpdate, isActiveTurn = false, curr
             {ACTIONS.map((a) => {
               const isDisabled = loading || (a.key === "check" && isCheckDisabled);
               return (
-                <button
-                  key={a.key}
-                  onClick={() => handleAction(a.key)}
-                  disabled={isDisabled}
-                  title={a.key === "check" && isCheckDisabled ? "Cannot check — a bet has been made" : ""}
-                  className={`${a.color} text-white text-xs font-semibold py-1.5 px-2 rounded-lg transition-all duration-150 disabled:opacity-40 active:scale-95`}
-                >
-                  {a.label}
-                </button>
+                <div key={a.key} className="relative group">
+                  <button
+                    onClick={() => handleAction(a.key)}
+                    disabled={isDisabled}
+                    className={`${a.color} text-white text-xs font-semibold py-1.5 px-2 rounded-lg transition-all duration-150 disabled:opacity-40 active:scale-95 w-full`}
+                  >
+                    {a.label}
+                  </button>
+                  {isDisabled && a.key === "check" && checkDisabledReason && (
+                    <div className="absolute bottom-full left-0 right-0 mb-1 p-1.5 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap text-center">
+                      {checkDisabledReason}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

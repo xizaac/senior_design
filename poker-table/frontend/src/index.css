@@ -16,11 +16,15 @@
   padding: 0;
 }
 
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   background-color: var(--felt-dark);
   color: #f0ece4;
   font-family: "DM Sans", sans-serif;
-  min-height: 100vh;
   overflow-x: hidden;
 }
 

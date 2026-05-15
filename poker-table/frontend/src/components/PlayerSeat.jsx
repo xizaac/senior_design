@@ -13,27 +13,68 @@ const ACTION_STYLES = {
 
 /**
  * PlayerSeat — renders a player's position at the table.
- * Props: player object, position ("top-left"|"top-right"|"bottom-left"|"bottom-right"), cardSize, isActiveTurn, blind ("small"|"big"|null)
+ * Props: player, position, cardSize, isActiveTurn, role ("dealer"|"small-blind"|"big-blind"|null)
  */
-const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn = false, blind = null }) => {
+const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn = false, role = null }) => {
   if (!player) return null;
 
-  const { name, cards = [], winOdds = 0, action = "waiting", bet = 0, isActive = true } = player;
+  const { name, cards = [], winOdds = 0, action = "waiting", bet = 0, isActive = true, chipCount = 0 } = player;
+  
+  // Handle eliminated player (OUT state)
+  if (chipCount === 0) {
+    return (
+      <div className="flex flex-col items-center gap-2">
+        <div
+          className="rounded-lg px-3 py-2 w-full text-center"
+          style={{
+            border: "2px solid rgba(239,68,68,0.5)",
+            background: "rgba(239,68,68,0.1)",
+          }}
+        >
+          <span className="font-display text-sm text-white/90 block mb-1">
+            {name || `Seat ${player.seat}`}
+          </span>
+          <span
+            className="text-lg font-bold px-3 py-1"
+            style={{
+              color: "#ef4444",
+              background: "rgba(239,68,68,0.2)",
+              borderRadius: "0.5rem",
+              display: "inline-block",
+            }}
+          >
+            OUT
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   const style = ACTION_STYLES[action] || ACTION_STYLES.waiting;
   const isFolded = action === "fold" || !isActive;
   const shouldHighlight = isActiveTurn && !isFolded;
 
-  const blindLabel = blind === "small" ? "Small Blind" : blind === "big" ? "Big Blind" : null;
+  // Role badge text
+  const roleLabel = role === "dealer" ? "D" : role === "small-blind" ? "SB" : role === "big-blind" ? "BB" : null;
+  const roleColor = role === "dealer" 
+    ? "rgba(255,255,255,0.2)" 
+    : role === "small-blind"
+    ? "rgba(59,130,246,0.3)"
+    : role === "big-blind"
+    ? "rgba(239,68,68,0.3)"
+    : "transparent";
 
   return (
     <div
-      className={`flex flex-col items-center gap-2 transition-all duration-300 ${isFolded ? "opacity-50" : "opacity-100"}`}
+      className={`flex flex-col items-center gap-2 transition-all duration-300 ${
+        isFolded ? "opacity-50" : "opacity-100"
+      } ${shouldHighlight ? "scale-108" : "scale-100"}`}
     >
-      {/* Cards with active turn glow */}
+      {/* Cards with active turn glow (Issue 5 - intensified) */}
       <div 
         className={`flex gap-1.5 transition-all duration-300 ${shouldHighlight ? "scale-105" : "scale-100"}`}
         style={shouldHighlight ? {
-          boxShadow: "0 0 0 3px #d4a843, 0 0 20px rgba(212,168,67,0.6)",
+          boxShadow: "0 0 0 3px #d4a843, 0 0 24px rgba(212,168,67,0.7)",
         } : {}}
       >
         {cards.length > 0 ? (
@@ -54,10 +95,10 @@ const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn
         )}
       </div>
 
-      {/* Active turn badge */}
+      {/* Active turn badge (Issue 5 - bright gold) */}
       {shouldHighlight && (
         <div
-          className="text-xs font-bold font-mono px-2 py-0.5 rounded-full animate-pulse"
+          className="text-xs font-bold font-mono px-2 py-0.5 rounded-full animate-pulse-gold"
           style={{
             background: "rgba(212,168,67,0.3)",
             border: "1px solid #d4a843",
@@ -68,40 +109,56 @@ const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn
         </div>
       )}
 
-      {/* Name plate */}
+      {/* Name plate with role badges (Issue 6) */}
       <div
-        className={`rounded-lg px-3 py-2 w-full border ${style.bg} ${style.border} transition-all duration-300 ${
-          shouldHighlight ? "ring-2" : ""
-        }`}
-        style={shouldHighlight ? {
+        className={`rounded-lg px-3 py-2 w-full transition-all duration-300 ${shouldHighlight ? "ring-2" : ""}`}
+        style={{
+          border: shouldHighlight 
+            ? "1px solid rgba(212,168,67,0.5)" 
+            : "1px solid rgba(255,255,255,0.1)",
+          background: shouldHighlight
+            ? "rgba(212,168,67,0.05)"
+            : "rgba(255,255,255,0.02)",
           ringColor: "#d4a843",
-        } : {}}
+        }}
       >
-        <div className="flex items-center justify-between mb-1">
-          <span className="font-display text-sm text-white/90 truncate max-w-[100px]">
+        {/* Header: Name + Role Badge + Action */}
+        <div className="flex items-center justify-between mb-1 gap-1">
+          <span className="font-display text-sm text-white/90 truncate flex-1">
             {name || `Seat ${player.seat}`}
           </span>
+          
+          {/* Role badge (Issue 6) */}
+          {roleLabel && (
+            <div
+              className="text-xs font-bold font-mono px-1.5 py-0.5 rounded"
+              style={{
+                background: roleColor,
+                border: "1px solid rgba(212,168,67,0.3)",
+                color: role === "small-blind" ? "#3b82f6" : role === "big-blind" ? "#ef4444" : "#ffffff",
+                minWidth: "24px",
+                textAlign: "center",
+              }}
+            >
+              {roleLabel}
+            </div>
+          )}
+
+          {/* Action badge (Issue 5 - reduced intensity) */}
           {action && action !== "waiting" && (
             <span
-              className={`text-xs font-bold font-mono px-1.5 py-0.5 rounded ${style.bg} ${
-                isFolded ? "text-gray-500" : "text-white"
-              }`}
+              className="text-xs font-bold font-mono px-1 py-0.5 rounded"
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                color: isFolded ? "rgba(255,255,255,0.3)" : "#d4a843",
+                fontSize: "0.65rem",
+              }}
             >
               {style.label}
             </span>
           )}
         </div>
-
-        {blindLabel && (
-          <div className="text-xs font-bold font-mono px-1.5 py-0.5 rounded mb-1" style={{
-            background: "rgba(212,168,67,0.2)",
-            border: "1px solid rgba(212,168,67,0.4)",
-            color: "#d4a843",
-            display: "inline-block"
-          }}>
-            {blindLabel}
-          </div>
-        )}
 
         {bet > 0 && !isFolded && (
           <div className="text-xs text-gold-300 font-mono mb-1">Bet: ${bet}</div>

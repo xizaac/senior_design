@@ -7,6 +7,9 @@ const {
   endSession,
   advanceTurn,
   applyBlinds,
+  getPreFlopOrder,
+  getPostFlopOrder,
+  getNextActiveSeat,
 } = require("../services/sessionManager");
 
 // ── GET /api/game/status ──────────────────────────────────────────────────────
@@ -94,10 +97,12 @@ router.post("/action", async (req, res) => {
 
     // Validate check action
     if (action === "check") {
-      if (session.currentBet > 0 && player.bet < session.currentBet) {
+      const anyoneAllIn = session.players.some(p => p.action === "all-in" && p.isActive);
+      const canCheck = (session.currentBet === 0 || player.bet === session.currentBet) && !anyoneAllIn;
+      if (!canCheck) {
         return res.status(400).json({
           error: "INVALID_CHECK",
-          message: "Cannot check — a bet has been made. You must call, raise, or fold.",
+          message: "Cannot check — a player is all-in or a bet has been made. You must call or fold.",
         });
       }
     }
@@ -118,36 +123,34 @@ router.post("/action", async (req, res) => {
       session.actionHistory.shift();
     }
 
-    // Apply action and handle chip deductions
+    // Apply action and handle chip deductions using ADDITIVE pot logic
     player.action = action;
 
     if (action === "fold") {
       player.isActive = false;
     } else if (action === "call") {
-      const amountToCall = session.currentBet - player.bet;
-      const amountDeducted = Math.min(amountToCall, player.chipCount);
-      player.chipCount -= amountDeducted;
-      player.bet = session.currentBet - (amountToCall - amountDeducted);
-      if (player.chipCount === 0 && player.bet < session.currentBet) {
-        player.action = "all-in";
-      }
+      const callAmount = Math.min(session.currentBet - player.bet, player.chipCount);
+      player.chipCount -= callAmount;
+      session.pot += callAmount;
+      player.bet += callAmount;
+    } else if (action === "check") {
+      // No chips deducted for check
     } else if (action === "raise") {
-      const newBet = session.currentBet + Number(raiseAmount);
-      const totalRaise = newBet - player.bet;
-      const amountDeducted = Math.min(totalRaise, player.chipCount);
-      player.chipCount -= amountDeducted;
-      player.bet = player.bet + amountDeducted;
+      const totalRaiseCommit = (session.currentBet - player.bet) + raiseAmount;
+      const actualCommit = Math.min(totalRaiseCommit, player.chipCount);
+      player.chipCount -= actualCommit;
+      session.pot += actualCommit;
+      player.bet += actualCommit;
       session.currentBet = player.bet;
-      if (player.chipCount === 0 && player.bet < newBet) {
-        player.action = "all-in";
-      }
+      session.lastAggressorSeat = player.seat;
     } else if (action === "all-in") {
+      const allInAmount = player.chipCount;
+      session.pot += allInAmount;
+      player.bet += allInAmount;
       player.chipCount = 0;
       player.action = "all-in";
+      session.lastAggressorSeat = player.seat;
     }
-
-    // Update pot
-    session.pot = session.players.reduce((sum, p) => sum + (p.bet || 0), 0);
 
     // Advance turn
     advanceTurn(session);
@@ -175,7 +178,7 @@ router.post("/phase", async (req, res) => {
     session.phase = phase;
     session.status = "active";
 
-    // Reset per-round bet tracking on new phase
+    // Reset per-round bet tracking on new phase, but DO NOT reset pot
     if (["flop", "turn", "river", "showdown"].includes(phase)) {
       session.players.forEach((p) => {
         if (p.isActive) {
@@ -185,11 +188,16 @@ router.post("/phase", async (req, res) => {
       });
       session.currentBet = 0;
 
-      // Reset activePlayerSeat to first active player in turnOrder (for new round)
+      // For post-flop phases, switch to post-flop action order
+      if (phase !== "showdown") {
+        session.turnOrder = getPostFlopOrder(session.buttonSeat, session.smallBlindSeat, session.players);
+      }
+
+      // Reset activePlayerSeat to first active player in new turnOrder (must have chips)
       let activeFound = false;
       for (const seat of session.turnOrder) {
         const player = session.players.find((p) => p.seat === seat);
-        if (player && player.isActive) {
+        if (player && player.isActive && player.action !== "fold" && player.chipCount > 0) {
           session.activePlayerSeat = seat;
           activeFound = true;
           break;
@@ -266,6 +274,38 @@ router.post("/reset-player", async (req, res) => {
   }
 });
 
+// ── POST /api/game/buyback ────────────────────────────────────────────────────
+// Allow an eliminated player to buy back chips
+// Body: { sessionCode, seat, chipAmount }
+router.post("/buyback", async (req, res) => {
+  try {
+    const { sessionCode, seat, chipAmount } = req.body;
+    if (!sessionCode || !seat || chipAmount === undefined || chipAmount <= 0) {
+      return res.status(400).json({ error: "Missing required fields: sessionCode, seat, chipAmount" });
+    }
+
+    const Session = require("../models/Session");
+    const session = await Session.findOne({ sessionCode });
+    if (!session) return res.status(404).json({ error: "SESSION_NOT_FOUND" });
+
+    const player = session.players.find((p) => p.seat === Number(seat));
+    if (!player) return res.status(400).json({ error: "PLAYER_NOT_FOUND" });
+
+    // Add chips to eliminated player
+    player.chipCount = chipAmount;
+    player.isActive = true;
+    player.action = "waiting";
+    player.bet = 0;
+
+    await session.save();
+    const io = req.app.get("io");
+    io.to(sessionCode).emit("game:stateUpdate", session);
+    res.json({ success: true, session });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── POST /api/game/next-hand ──────────────────────────────────────────────────
 // Transition to next hand after showdown
 // Body: { sessionCode, winningSeat }
@@ -276,30 +316,44 @@ router.post("/next-hand", async (req, res) => {
     const session = await Session.findOne({ sessionCode });
     if (!session) return res.status(404).json({ error: "SESSION_NOT_FOUND" });
 
+    // Award pot to winner BEFORE resetting pot
     const winner = session.players.find((p) => p.seat === Number(winningSeat));
-    if (winner) {
-      winner.chipCount += session.pot;
+    if (!winner) return res.status(400).json({ error: "INVALID_SEAT" });
+    
+    winner.chipCount += session.pot;
+
+    // Reset pot and community cards
+    session.pot = 0;
+    session.communityCards = [];
+    session.currentBet = 0;
+    session.phase = "pre-flop";
+    session.lastAggressorSeat = null;
+
+    // Rotate button clockwise to next active player
+    let nextButtonSeat = getNextActiveSeat(session.buttonSeat, session.players);
+    
+    // Ensure button moves forward (not stuck on same player)
+    if (nextButtonSeat === session.buttonSeat) {
+      nextButtonSeat = nextButtonSeat === 4 ? 1 : nextButtonSeat + 1;
+      nextButtonSeat = getNextActiveSeat(nextButtonSeat - 1, session.players); // Try from next seat
     }
+    
+    session.buttonSeat = nextButtonSeat;
+    session.smallBlindSeat = getNextActiveSeat(nextButtonSeat, session.players);
+    session.bigBlindSeat = getNextActiveSeat(session.smallBlindSeat, session.players);
 
-    // Rotate turnOrder left by 1
-    const firstSeat = session.turnOrder.shift();
-    session.turnOrder.push(firstSeat);
-
-    // Reset all players
+    // Reset all players for new hand
     session.players.forEach((p) => {
-      p.isActive = true;
+      p.isActive = p.chipCount > 0;
       p.action = "waiting";
       p.bet = 0;
       p.cards = [];
     });
 
-    // Reset community cards and pot
-    session.communityCards = [];
-    session.pot = 0;
-    session.currentBet = 0;
-    session.phase = "pre-flop";
+    // Recalculate pre-flop turn order
+    session.turnOrder = getPreFlopOrder(session.buttonSeat, session.players);
 
-    // Re-apply blinds based on new turnOrder
+    // Apply blinds
     applyBlinds(session);
 
     await session.save();

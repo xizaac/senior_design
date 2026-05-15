@@ -55,9 +55,13 @@ const SessionSchema = new mongoose.Schema(
     currentBet: { type: Number, default: 0 },
     activePlayerSeat: { type: Number, default: 1 },      // whose turn it is
     dealerSeat: { type: Number, default: 1 },
+    buttonSeat: { type: Number, default: 1 },            // Dealer button position
+    smallBlindSeat: { type: Number, default: 2 },        // Small blind player seat
+    bigBlindSeat: { type: Number, default: 3 },          // Big blind player seat
     smallBlind: { type: Number, default: 10 },           // Small blind amount
     bigBlind: { type: Number, default: 20 },             // Big blind amount
     turnOrder: { type: [Number], default: [1, 2, 3, 4] }, // Ordered seat numbers for turn rotation
+    lastAggressorSeat: { type: Number, default: null },  // Last player who bet/raised (for re-opening action)
     actionHistory: { type: Array, default: [] },         // History of actions for undo feature
     spectatorCount: { type: Number, default: 0 },
     lastEsp32Update: { type: Date, default: null },

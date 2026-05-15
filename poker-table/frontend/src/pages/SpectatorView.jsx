@@ -68,10 +68,10 @@ const SpectatorView = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Header */}
+    <div className="flex flex-col" style={{ height: "100vh", overflow: "hidden" }}>
+      {/* Header - fixed height */}
       <header
-        className="flex items-center justify-between px-6 py-3 border-b"
+        className="flex items-center justify-between px-6 py-3 border-b flex-shrink-0"
         style={{ borderColor: "rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.3)" }}
       >
         <span className="font-display text-lg" style={{ color: "#d4a843" }}>
@@ -96,7 +96,8 @@ const SpectatorView = () => {
         </div>
       </header>
 
-      <div className="flex-1 flex flex-col items-center p-4 gap-4 w-full">
+      {/* Main content area - flex-1 to fill remaining space, with controlled scroll */}
+      <div className="flex-1 flex flex-col items-center p-4 gap-4 w-full overflow-y-auto">
         <SessionCodeDisplay code={sessionCode} spectatorCount={spectatorCount} />
 
         {session.lastEsp32Update && (
@@ -105,12 +106,12 @@ const SpectatorView = () => {
           </div>
         )}
 
-        <div className="w-full">
+        <div className="w-full flex-1 overflow-hidden">
           <PokerTable gameState={session} />
         </div>
 
         {/* Spectator watermark */}
-        <div className="text-xs text-white/20 font-mono tracking-widest uppercase mt-2">
+        <div className="text-xs text-white/20 font-mono tracking-widest uppercase mt-2 flex-shrink-0">
           Spectator Mode · Read Only
         </div>
       </div>
