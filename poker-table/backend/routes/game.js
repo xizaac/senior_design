@@ -149,6 +149,10 @@ router.post("/action", async (req, res) => {
       player.bet += allInAmount;
       player.chipCount = 0;
       player.action = "all-in";
+      // An all-in only raises the bet others must match if it exceeds the
+      // current bet — without this, a later "call" computes its amount
+      // against the old (too-low) currentBet and adds nothing to the pot.
+      session.currentBet = Math.max(session.currentBet, player.bet);
       session.lastAggressorSeat = player.seat;
     }
 
@@ -178,10 +182,13 @@ router.post("/phase", async (req, res) => {
     session.phase = phase;
     session.status = "active";
 
-    // Reset per-round bet tracking on new phase, but DO NOT reset pot
+    // Reset per-round bet tracking on new phase, but DO NOT reset pot.
+    // All-in players are skipped: they can't act again this hand, and their
+    // bet must stay nonzero so the frontend can tell "all-in" apart from
+    // "eliminated" (both have chipCount === 0).
     if (["flop", "turn", "river", "showdown"].includes(phase)) {
       session.players.forEach((p) => {
-        if (p.isActive) {
+        if (p.isActive && p.action !== "all-in") {
           p.action = "waiting";
           p.bet = 0;
         }

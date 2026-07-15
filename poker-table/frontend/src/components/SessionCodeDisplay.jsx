@@ -4,7 +4,7 @@ import React, { useState } from "react";
  * SessionCodeDisplay — shows the session code with copy button.
  * Props: code (string), spectatorCount (number)
  */
-const SessionCodeDisplay = ({ code, spectatorCount = 0 }) => {
+const SessionCodeDisplay = ({ code, spectatorCount = 0, compact = false }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -19,7 +19,9 @@ const SessionCodeDisplay = ({ code, spectatorCount = 0 }) => {
 
   return (
     <div
-      className="rounded-2xl px-6 py-4 flex flex-col items-center gap-2 animate-pulse-gold"
+      className={`rounded-2xl flex flex-col items-center animate-pulse-gold flex-shrink-0 ${
+        compact ? "px-5 py-2 gap-1" : "px-6 py-4 gap-2"
+      }`}
       style={{
         background: "rgba(212,168,67,0.08)",
         border: "1px solid rgba(212,168,67,0.3)",
@@ -29,12 +31,12 @@ const SessionCodeDisplay = ({ code, spectatorCount = 0 }) => {
         Session Code
       </span>
       <span
-        className="text-4xl font-mono font-bold tracking-[0.3em]"
+        className={`font-mono font-bold tracking-[0.3em] ${compact ? "text-2xl" : "text-4xl"}`}
         style={{ color: "#d4a843" }}
       >
         {code}
       </span>
-      <div className="flex items-center gap-3 mt-1">
+      <div className={`flex items-center gap-3 ${compact ? "" : "mt-1"}`}>
         <button
           onClick={handleCopy}
           className="text-xs px-3 py-1 rounded-full transition-all duration-150"

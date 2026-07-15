@@ -221,12 +221,15 @@ const DealerView = () => {
         </div>
       </header>
 
-      {/* Main content area - flex-1 to fill remaining space */}
-      <div className="flex-1 flex flex-col lg:flex-row gap-4 p-4 overflow-hidden">
-        {/* ── Left: Table View (scrollable if needed) ─────────────────────────────────────── */}
-        <div className="flex-1 flex flex-col gap-4 overflow-hidden">
-          <SessionCodeDisplay code={sessionCode} spectatorCount={spectatorCount} />
-          <div className="flex-1 overflow-hidden">
+      {/* Main content area - flex-1 to fill remaining space. min-h-0 (and
+          min-w-0 on the row) is required at every level so these flex items
+          actually shrink to the available space instead of growing to fit
+          their (fixed-size) children. */}
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-4 p-4 overflow-hidden">
+        {/* ── Left: Table View ─────────────────────────────────────── */}
+        <div className="flex-1 min-h-0 min-w-0 flex flex-col gap-2 overflow-hidden">
+          <SessionCodeDisplay code={sessionCode} spectatorCount={spectatorCount} compact />
+          <div className="flex-1 min-h-0 overflow-hidden">
             <PokerTable gameState={session} />
           </div>
         </div>
@@ -268,8 +271,8 @@ const DealerView = () => {
                 currentBet={session.currentBet}
                 players={session.players}
               />
-              {/* OUT - Show buy-back option */}
-              {player.chipCount === 0 && (
+              {/* OUT - Show buy-back option (all-in players have chipCount === 0 too, but keep a nonzero bet) */}
+              {player.chipCount === 0 && player.bet === 0 && (
                 <button
                   onClick={() => setBuybackSeat(player.seat)}
                   className="w-full text-xs py-1 rounded text-red-400 hover:text-red-300 transition-colors"

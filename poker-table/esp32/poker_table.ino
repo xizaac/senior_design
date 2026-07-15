@@ -35,6 +35,8 @@
 #include <esp_now.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_system.h>
+#include "equity_calculations.h"
 
 // ============================================================
 // Debug mode
@@ -61,12 +63,12 @@ const int COMM_BUSY    = 26;
 // ============================================================
 // WiFi / Backend Configuration
 // ============================================================
-const char* WIFI_SSID     = "Diego's iPhone";
-const char* WIFI_PASSWORD = "12345678";
+const char* WIFI_SSID     = "diego";
+const char* WIFI_PASSWORD = "password";
 
 // Base URL only (no trailing slash) — e.g. "http://192.168.1.50:3001"
 // or "https://your-backend.railway.app"
-const char* BACKEND_HOST  = "http://172.20.10.6:3001";
+const char* BACKEND_HOST  = "http://172.20.10.10:3001";
 
 // Must match ESP32_API_KEY in backend/.env
 const char* ESP32_API_KEY = "srpt";
@@ -231,6 +233,13 @@ String activeSessionCode = "";          // discovered from GET /api/esp32/state
 String backendPhase = "idle";           // dealer-controlled phase from the website
 bool playerFoldedRemote[5] = {false, false, false, false, false}; // index 1-4 used
 float playerWinOdds[5] = {0, 0, 0, 0, 0};
+
+// Cached per-seat equity results and hand names — computed together by
+// updateHandEquityInfo() (see below) whenever new cards/folds arrive,
+// rather than re-running the Monte Carlo simulation on a fixed timer.
+float g_winOdds[5] = {0, 0, 0, 0, 0};
+String playerHandName[5] = {"", "", "", "", ""}; // e.g. "Two Pair", "" if not yet known
+#define EQUITY_ITERATIONS 1500
 
 // ============================================================
 // Reader Struct
@@ -945,6 +954,14 @@ void handleCommunityCardReader() {
         nextCommunityCardIndex++;
 
         updateReadyStatus();
+
+        // Recompute equity and hand names now that a new community card is
+        // on the board — only meaningful once at least 2 players have been
+        // scanned.
+        if (readyPlayerCount >= 2) {
+          updateHandEquityInfo();
+        }
+
         updateMainLCD();
         printCurrentGameState();
 
@@ -1017,6 +1034,13 @@ void clearRoundDataOnly() {
   allPlayersReady = false;
   allCommunityCardsReady = false;
   fullTableReadyForEquity = false;
+
+  // Clear cached equity/hand names so a new hand doesn't briefly show stale
+  // info from the previous one before enough players/cards are known again.
+  for (int seat = 1; seat <= 4; seat++) {
+    g_winOdds[seat] = 0.0;
+    playerHandName[seat] = "";
+  }
 
   mainState = ROUND_COLLECTING_DATA;
   communityState = WAITING_FOR_COMMUNITY_CARD;
@@ -1132,6 +1156,13 @@ void handleIncomingPlayerPacket(const uint8_t *incomingData, int len) {
   Serial.println("----------------------------------");
 
   updateReadyStatus();
+
+  // Recompute equity and hand names now that a new seat's hole cards are
+  // known — only meaningful once at least 2 players have been scanned.
+  if (readyPlayerCount >= 2) {
+    updateHandEquityInfo();
+  }
+
   updateMainLCD();
   printCurrentGameState();
 }
@@ -1228,19 +1259,107 @@ void connectToWiFi() {
   }
 }
 
-// Placeholder for the real hand-equity / Monte Carlo calculation.
-// Folded seats (playerFoldedRemote[seat] == true) must be excluded from
-// opponents' possible ranges when this is implemented.
+// Converts a card token like "Ac", "10d", "Kh" (as produced by card_map /
+// stored in playerCard1/2[] and communityCards[]) into the plain-C EqCard
+// type equity_calculations.c expects. Ten is represented as 'T' on the C
+// side since EqCard.rank is a single char.
+EqCard tokenToEqCard(const String &token) {
+  EqCard c = { '\0', '\0' };
+  if (token.length() < 2) return c;
+
+  String rankPart = token.substring(0, token.length() - 1);
+  char suitChar = token.charAt(token.length() - 1);
+
+  c.rank = (rankPart == "10") ? 'T' : rankPart.charAt(0);
+  c.suit = suitChar;
+  return c;
+}
+
+// Fills `out` with the EqCard form of whatever community cards have been
+// read so far (0-5 of them) and returns how many. Shared by
+// computeAllWinOdds() and computeAllHandNames() so both work off the same
+// conversion.
+int gatherKnownCommunityCards(EqCard *out) {
+  int numCommunity = 0;
+  for (int i = 0; i < 5; i++) {
+    if (communityCardsReady[i]) {
+      out[numCommunity++] = tokenToEqCard(communityCards[i]);
+    }
+  }
+  return numCommunity;
+}
+
+// Runs the equity engine once for all 4 seats and caches the results in
+// g_winOdds[]. Called from updateHandEquityInfo() below on the events that
+// actually change equity, rather than on a fixed timer.
+void computeAllWinOdds() {
+  EqPlayer eqPlayers[4];
+  EqCard eqCommunity[5];
+  int numCommunity = gatherKnownCommunityCards(eqCommunity);
+
+  for (int seat = 1; seat <= 4; seat++) {
+    EqPlayer &p = eqPlayers[seat - 1];
+    p.seat = seat;
+    p.folded = playerFoldedRemote[seat] ? 1 : 0;
+    p.cardsKnown = playerCardsReady[seat] ? 1 : 0;
+    if (p.cardsKnown) {
+      p.hole[0] = tokenToEqCard(playerCard1[seat]);
+      p.hole[1] = tokenToEqCard(playerCard2[seat]);
+    }
+  }
+
+  float results[4];
+  equity_calculate(eqPlayers, 4, eqCommunity, numCommunity, EQUITY_ITERATIONS, results);
+
+  for (int seat = 1; seat <= 4; seat++) {
+    g_winOdds[seat] = results[seat - 1];
+  }
+}
+
+// Determines each live seat's current best-hand name (e.g. "Two Pair") from
+// their hole cards plus however many community cards are on the board,
+// caching results in playerHandName[]. Folded or not-yet-dealt seats get
+// an empty string (nothing to display).
+void computeAllHandNames() {
+  EqCard eqCommunity[5];
+  int numCommunity = gatherKnownCommunityCards(eqCommunity);
+
+  for (int seat = 1; seat <= 4; seat++) {
+    if (!playerCardsReady[seat] || playerFoldedRemote[seat]) {
+      playerHandName[seat] = "";
+      continue;
+    }
+
+    EqCard cards[7];
+    cards[0] = tokenToEqCard(playerCard1[seat]);
+    cards[1] = tokenToEqCard(playerCard2[seat]);
+    for (int i = 0; i < numCommunity; i++) {
+      cards[2 + i] = eqCommunity[i];
+    }
+
+    HandCategory category = equity_hand_category(cards, 2 + numCommunity);
+    playerHandName[seat] = String(equity_hand_name(category));
+  }
+}
+
+// Single entry point called from the three events that change equity/hand
+// names: a new player's cards arriving, a community card being read, and a
+// fold on the dealer's website (see call sites in handleIncomingPlayerPacket(),
+// handleCommunityCardReader(), and fetchBackendState()).
+void updateHandEquityInfo() {
+  computeAllWinOdds();
+  computeAllHandNames();
+}
+
+// Folded seats (playerFoldedRemote[seat] == true) and seats whose cards
+// haven't been read yet are excluded — computeAllWinOdds() also excludes
+// them from the underlying simulation, this is just the per-seat lookup.
 float calculateWinOdds(int seat) {
   if (seat < 1 || seat > 4) return 0.0;
   if (playerFoldedRemote[seat]) return 0.0;
   if (!playerCardsReady[seat]) return 0.0;
 
-  // TODO: plug in real equity calculation here, using:
-  //  - playerCard1[seat], playerCard2[seat] for this seat's hole cards
-  //  - communityCards[0..4] (only entries where communityCardsReady[i] is true)
-  //  - skip any other seat where playerFoldedRemote[otherSeat] is true
-  return 0.0;
+  return g_winOdds[seat];
 }
 
 // GET /api/esp32/state — learn the dealer-controlled phase and fold status.
@@ -1280,6 +1399,8 @@ bool fetchBackendState() {
   }
 
   String previousPhase = backendPhase;
+  bool previousFolded[5];
+  memcpy(previousFolded, playerFoldedRemote, sizeof(previousFolded));
 
   backendSessionActive = true;
   activeSessionCode = doc["sessionCode"].as<String>();
@@ -1291,6 +1412,19 @@ bool fetchBackendState() {
     if (seat >= 1 && seat <= 4) {
       playerFoldedRemote[seat] = p["folded"].as<bool>();
     }
+  }
+
+  // Recompute equity and hand names if any seat's fold status changed on
+  // the dealer's website — a fold changes which hole cards are live.
+  bool foldChanged = false;
+  for (int seat = 1; seat <= 4; seat++) {
+    if (playerFoldedRemote[seat] != previousFolded[seat]) {
+      foldChanged = true;
+      break;
+    }
+  }
+  if (foldChanged && readyPlayerCount >= 2) {
+    updateHandEquityInfo();
   }
 
   // The dealer started a new hand on the website (phase reset to pre-flop) —
@@ -1311,6 +1445,12 @@ void pushGameStateToBackend() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (!backendSessionActive || activeSessionCode.length() == 0) return;
 
+  // Equity is recomputed on the events that actually change it (a new
+  // player's cards arriving, a community card being read, a fold) rather
+  // than on this push timer — see computeAllWinOdds() call sites in
+  // handleIncomingPlayerPacket(), handleCommunityCardReader(), and
+  // fetchBackendState(). This just sends whatever's currently cached.
+
   JsonDocument doc;
   doc["sessionCode"] = activeSessionCode;
   doc["phase"] = backendPhase;
@@ -1330,6 +1470,7 @@ void pushGameStateToBackend() {
 
     playerWinOdds[i] = calculateWinOdds(i);
     p["winOdds"] = playerWinOdds[i];
+    p["handName"] = playerHandName[i];
   }
 
   JsonArray community = doc["communityCards"].to<JsonArray>();
@@ -1418,6 +1559,9 @@ void setup() {
   delay(1000);
 
   Serial.println("\n--- PN5180 MULTI-READER + BACKEND SYNC ---");
+
+  // Seed the equity engine's Monte Carlo sampling with real hardware entropy.
+  srand(esp_random());
 
   // LCD first, so we can show boot status
   Wire.begin(21, 22);

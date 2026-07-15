@@ -18,24 +18,26 @@ const ACTION_STYLES = {
 const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn = false, role = null }) => {
   if (!player) return null;
 
-  const { name, cards = [], winOdds = 0, action = "waiting", bet = 0, isActive = true, chipCount = 0 } = player;
-  
-  // Handle eliminated player (OUT state)
-  if (chipCount === 0) {
+  const { name, cards = [], winOdds = 0, handName = "", action = "waiting", bet = 0, isActive = true, chipCount = 0 } = player;
+
+  // Handle eliminated player (OUT state) — a player who went all-in also has
+  // chipCount === 0, but keeps a nonzero bet for the rest of the hand, so
+  // only treat them as OUT once both are zero.
+  if (chipCount === 0 && bet === 0) {
     return (
       <div className="flex flex-col items-center gap-2">
         <div
-          className="rounded-lg px-3 py-2 w-full text-center"
+          className="rounded-lg px-4 py-3 w-full text-center"
           style={{
             border: "2px solid rgba(239,68,68,0.5)",
             background: "rgba(239,68,68,0.1)",
           }}
         >
-          <span className="font-display text-sm text-white/90 block mb-1">
+          <span className="font-display text-lg text-white/90 block mb-1.5">
             {name || `Seat ${player.seat}`}
           </span>
           <span
-            className="text-lg font-bold px-3 py-1"
+            className="text-xl font-bold px-3 py-1"
             style={{
               color: "#ef4444",
               background: "rgba(239,68,68,0.2)",
@@ -98,7 +100,7 @@ const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn
       {/* Active turn badge (Issue 5 - bright gold) */}
       {shouldHighlight && (
         <div
-          className="text-xs font-bold font-mono px-2 py-0.5 rounded-full animate-pulse-gold"
+          className="text-sm font-bold font-mono px-2.5 py-1 rounded-full animate-pulse-gold"
           style={{
             background: "rgba(212,168,67,0.3)",
             border: "1px solid #d4a843",
@@ -111,10 +113,10 @@ const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn
 
       {/* Name plate with role badges (Issue 6) */}
       <div
-        className={`rounded-lg px-3 py-2 w-full transition-all duration-300 ${shouldHighlight ? "ring-2" : ""}`}
+        className={`rounded-lg px-4 py-3 w-full transition-all duration-300 ${shouldHighlight ? "ring-2" : ""}`}
         style={{
-          border: shouldHighlight 
-            ? "1px solid rgba(212,168,67,0.5)" 
+          border: shouldHighlight
+            ? "1px solid rgba(212,168,67,0.5)"
             : "1px solid rgba(255,255,255,0.1)",
           background: shouldHighlight
             ? "rgba(212,168,67,0.05)"
@@ -123,20 +125,20 @@ const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn
         }}
       >
         {/* Header: Name + Role Badge + Action */}
-        <div className="flex items-center justify-between mb-1 gap-1">
-          <span className="font-display text-sm text-white/90 truncate flex-1">
+        <div className="flex items-center justify-between mb-1.5 gap-1.5">
+          <span className="font-display text-lg text-white/90 truncate flex-1">
             {name || `Seat ${player.seat}`}
           </span>
-          
+
           {/* Role badge (Issue 6) */}
           {roleLabel && (
             <div
-              className="text-xs font-bold font-mono px-1.5 py-0.5 rounded"
+              className="text-sm font-bold font-mono px-2 py-0.5 rounded"
               style={{
                 background: roleColor,
                 border: "1px solid rgba(212,168,67,0.3)",
                 color: role === "small-blind" ? "#3b82f6" : role === "big-blind" ? "#ef4444" : "#ffffff",
-                minWidth: "24px",
+                minWidth: "30px",
                 textAlign: "center",
               }}
             >
@@ -147,12 +149,12 @@ const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn
           {/* Action badge (Issue 5 - reduced intensity) */}
           {action && action !== "waiting" && (
             <span
-              className="text-xs font-bold font-mono px-1 py-0.5 rounded"
+              className="text-xs font-bold font-mono px-1.5 py-0.5 rounded"
               style={{
                 background: "rgba(255,255,255,0.03)",
                 border: "1px solid rgba(255,255,255,0.1)",
                 color: isFolded ? "rgba(255,255,255,0.3)" : "#d4a843",
-                fontSize: "0.65rem",
+                fontSize: "0.75rem",
               }}
             >
               {style.label}
@@ -161,10 +163,16 @@ const PlayerSeat = ({ player, position = "bottom", cardSize = "md", isActiveTurn
         </div>
 
         {bet > 0 && !isFolded && (
-          <div className="text-xs text-gold-300 font-mono mb-1">Bet: ${bet}</div>
+          <div className="text-sm text-gold-300 font-mono mb-1.5">Bet: ${bet}</div>
         )}
 
-        <div className="text-xs text-white/60 font-mono mb-1">Stack: ${player.chipCount || 0}</div>
+        <div className="text-sm text-white/60 font-mono mb-1.5">Stack: ${player.chipCount || 0}</div>
+
+        {handName && !isFolded && (
+          <div className="text-sm font-mono mb-1.5" style={{ color: "#d4a843" }}>
+            Hand: {handName}
+          </div>
+        )}
 
         <OddsBar odds={winOdds} isActive={isActive} isFolded={isFolded} />
       </div>

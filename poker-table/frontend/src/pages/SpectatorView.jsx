@@ -96,22 +96,24 @@ const SpectatorView = () => {
         </div>
       </header>
 
-      {/* Main content area - flex-1 to fill remaining space, with controlled scroll */}
-      <div className="flex-1 flex flex-col items-center p-4 gap-4 w-full overflow-y-auto">
-        <SessionCodeDisplay code={sessionCode} spectatorCount={spectatorCount} />
+      {/* Main content area - flex-1 to fill remaining space. min-h-0 is required
+          so this flex item actually shrinks to the space left by the header
+          instead of growing to fit its (fixed-size) children. */}
+      <div className="flex-1 min-h-0 flex flex-col items-center p-2 gap-2 w-full overflow-hidden">
+        <SessionCodeDisplay code={sessionCode} spectatorCount={spectatorCount} compact />
 
         {session.lastEsp32Update && (
-          <div className="text-xs text-white/25 font-mono">
+          <div className="text-xs text-white/25 font-mono flex-shrink-0">
             Last ESP32 update: {new Date(session.lastEsp32Update).toLocaleTimeString()}
           </div>
         )}
 
-        <div className="w-full flex-1 overflow-hidden">
+        <div className="w-full flex-1 min-h-0 overflow-hidden">
           <PokerTable gameState={session} />
         </div>
 
         {/* Spectator watermark */}
-        <div className="text-xs text-white/20 font-mono tracking-widest uppercase mt-2 flex-shrink-0">
+        <div className="text-xs text-white/20 font-mono tracking-widest uppercase flex-shrink-0">
           Spectator Mode · Read Only
         </div>
       </div>

@@ -16,6 +16,7 @@ const PlayerSchema = new mongoose.Schema(
     name: { type: String, default: "" },
     cards: { type: [CardSchema], default: [] },    // 2 hole cards
     winOdds: { type: Number, default: 0 },         // 0–100 percentage
+    handName: { type: String, default: "" },       // e.g. "Two Pair", from the ESP32
     action: {
       type: String,
       enum: ["waiting", "call", "check", "raise", "fold", "all-in", ""],

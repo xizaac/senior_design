@@ -50,7 +50,8 @@ const parseCardToken = (token) => {
  *     {
  *       "seat": 1,
  *       "cards": ["Ac", "Kh"],        // compact tokens, or [{rank,suit}, ...]
- *       "winOdds": 67.4
+ *       "winOdds": 67.4,
+ *       "handName": "Two Pair"
  *     },
  *     ...
  *   ],
@@ -92,6 +93,9 @@ router.post("/update", validateApiKey, async (req, res) => {
           }
           if (typeof esp32Player.winOdds === "number") {
             player.winOdds = Math.min(100, Math.max(0, esp32Player.winOdds));
+          }
+          if (typeof esp32Player.handName === "string") {
+            player.handName = esp32Player.handName;
           }
         }
       });
