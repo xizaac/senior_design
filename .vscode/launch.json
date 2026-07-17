@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug equity_debug_test",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/poker-table/esp32/test/equity_debug_test",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/poker-table/esp32/test",
+            "externalConsole": true,
+            "MIMode": "lldb",
+            "preLaunchTask": "Build equity_debug_test (with equity_calculations.c)"
+        }
+    ]
+}
