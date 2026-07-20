@@ -84,7 +84,8 @@ const Home = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6">
+    <div className="full-viewport-height overflow-y-auto flex flex-col items-center p-6">
+      <div className="w-full max-w-lg m-auto">
       {/* Header */}
       <div className="text-center mb-10">
         <h1 className="font-display text-3xl sm:text-5xl font-bold mb-2" style={{ color: "#d4a843" }}>
@@ -96,9 +97,9 @@ const Home = () => {
       </div>
 
       {loading ? (
-        <div className="text-white/50 animate-pulse font-mono">Connecting to server...</div>
+        <div className="text-white/50 animate-pulse font-mono text-center">Connecting to server...</div>
       ) : (
-        <div className="w-full max-w-lg space-y-6">
+        <div className="w-full space-y-6">
           {/* Table status */}
           <div
             className="rounded-xl px-4 py-3 text-center text-sm font-mono"
@@ -209,7 +210,7 @@ const Home = () => {
                 onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                 placeholder="Enter 6-digit code"
                 maxLength={6}
-                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-gold-400 font-mono tracking-widest uppercase"
+                className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-gold-400 font-mono tracking-widest uppercase"
               />
               <button
                 type="submit"
@@ -246,6 +247,7 @@ const Home = () => {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 };

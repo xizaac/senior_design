@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import PokerTable from "../components/PokerTable";
 import BetControls from "../components/BetControls";
 import SessionCodeDisplay from "../components/SessionCodeDisplay";
+import MobileDealerPanel from "../components/MobileDealerPanel";
 import useGameState from "../hooks/useGameState";
 import { advancePhase, endSession, resetPlayer, joinSession as apiJoin, nextHand, undoAction, buyback } from "../api";
 
@@ -221,11 +222,37 @@ const DealerView = () => {
         </div>
       </header>
 
+      {/* Below `sm` (phones), the corner-table layout doesn't have room to
+          stay legible — the felt shrinks to a sliver while controls end up
+          scrolled far below the cards they refer to — so MobileDealerPanel
+          replaces it there instead. `sm` and up (tablets/desktop) render
+          exactly the previous layout, untouched. */}
+      <div className="sm:hidden flex-1 min-h-0 overflow-y-auto flex flex-col gap-1 p-2">
+        <SessionCodeDisplay code={sessionCode} spectatorCount={spectatorCount} compact />
+        <MobileDealerPanel
+          session={session}
+          sessionCode={sessionCode}
+          setGameState={setGameState}
+          handleResetPlayer={handleResetPlayer}
+          setBuybackSeat={setBuybackSeat}
+          handleUndo={handleUndo}
+          undoLoading={undoLoading}
+          handleNextPhase={handleNextPhase}
+          phaseLoading={phaseLoading}
+          nextPhase={nextPhase}
+          winningSeat={winningSeat}
+          setWinningSeat={setWinningSeat}
+          handleNextHand={handleNextHand}
+          nextHandLoading={nextHandLoading}
+          error={error}
+        />
+      </div>
+
       {/* Main content area - flex-1 to fill remaining space. min-h-0 (and
           min-w-0 on the row) is required at every level so these flex items
           actually shrink to the available space instead of growing to fit
           their (fixed-size) children. */}
-      <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-2 p-2 overflow-hidden">
+      <div className="hidden sm:flex flex-1 min-h-0 flex-col lg:flex-row gap-2 p-2 overflow-hidden">
         {/* ── Left: Table View ─────────────────────────────────────── */}
         <div className="flex-1 min-h-0 min-w-0 flex flex-col gap-1 overflow-hidden">
           <SessionCodeDisplay code={sessionCode} spectatorCount={spectatorCount} compact />

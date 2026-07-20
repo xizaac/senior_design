@@ -2,7 +2,7 @@ import React, { useLayoutEffect, useRef, useState } from "react";
 import PlayerSeat from "./PlayerSeat";
 import PlayingCard from "./PlayingCard";
 
-const PHASE_LABELS = {
+export const PHASE_LABELS = {
   idle: "Waiting to start",
   "pre-flop": "Pre-Flop",
   flop: "Flop",
@@ -66,11 +66,14 @@ const MAX_FELT_ASPECT = 3;
 // around the whole layout. Kept tight so more of the available space goes
 // to the felt table itself rather than to margins.
 const GAP = 6;
-const OUTER_PADDING = 4;
+// 4px read as uncomfortably tight against real devices' physical edges
+// (reported on iPad) — nudged up slightly. Still small enough that it
+// costs negligible budget compared to the felt/corner sizes involved.
+const OUTER_PADDING = 10;
 
 // Fixed "natural" width every corner box renders at before any shrink-to-fit
 // scaling is applied.
-const CORNER_WIDTH = 460;
+export const CORNER_WIDTH = 460;
 
 /**
  * FeltTable — the oval table surface, rendered at an exact caller-supplied
