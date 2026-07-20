@@ -34,10 +34,13 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <esp_system.h>
 #include <Adafruit_INA219.h>
 #include <Adafruit_MCP9808.h>
+#include <esp_wifi.h>
+#include <esp_eap_client.h>
 #include "equity_calculations.h"
 
 // ============================================================
@@ -68,33 +71,53 @@ const int AUDIO_PIN    = 13;
 // ============================================================
 // WiFi / Backend Configuration
 // ============================================================
-const char* WIFI_SSID     = "diego";
-const char* WIFI_PASSWORD = "password";
+// UCF_WPA2 is WPA2-Enterprise (802.1X/PEAP), not a plain PSK network — it
+// needs the identity/username/password below and the enterprise connect
+// sequence in connectToWiFi(), not a plain WiFi.begin(ssid, password).
+// Switched from a phone hotspot specifically because its 5-device cap left
+// no room for a laptop once all 5 ESP32 boards joined it (see
+// players_esp_code.ino for why player boards join WiFi at all) — as a
+// bonus, university APs also run on fixed, professionally-managed
+// channels, so this should be far more stable than a phone hotspot's own
+// occasional channel hopping.
+const char* WIFI_SSID           = "UCF_WPA2";
+const char* ENTERPRISE_IDENTITY = "di746193";
+const char* ENTERPRISE_USERNAME = "di746193";
+const char* ENTERPRISE_PASSWORD = "Dasm23052004";
 
 // ESP-NOW requires both ends of a link to be on the EXACT same WiFi
 // channel — a mismatch means packets are never seen at all in either
-// direction, no matter how strong the signal is, which looks identical to
-// a wiring/MAC-address problem and is easy to chase the wrong thing for.
-// This board's actual channel is decided by the router above, whatever
-// channel it happens to be on — connectToWiFi() below prints it and warns
-// if it doesn't match this constant. The player boards never join that
-// network themselves (they only speak ESP-NOW), so they have no way to
-// discover that channel automatically — each one must have this same
-// value hardcoded (see WIFI_CHANNEL in players_esp_code.ino) and be
-// reflashed if it ever changes. If the router is set to "auto" channel, it
-// can silently change on its own (e.g. after a power cycle) — for a stable
-// table, log into the router and pin it to a fixed channel matching this.
-const int WIFI_CHANNEL = 6;
+// direction, no matter how strong the signal is. This board's channel is
+// just whatever channel the network above is actually on — connectToWiFi()
+// below prints it for visibility. The player boards join this same network
+// too (see players_esp_code.ino), specifically so they always learn the
+// network's REAL current channel instead of relying on a hardcoded value.
+//
+// Base URL only (no trailing slash). Once the backend is deployed on
+// Railway, set this to its https:// URL (Settings → Networking → Generate
+// Domain in the Railway dashboard), e.g. "https://your-app.up.railway.app"
+// — fetchBackendState()/pushGameStateToBackend() below now always connect
+// via backendSecureClient (WiFiClientSecure, .setInsecure()), which only
+// works against an https:// server. If this ever points at a plain local
+// http:// address again instead (like the earlier local-IP setups), those
+// two functions need to go back to a plain WiFiClient/http.begin(url) —
+// WiFiClientSecure always attempts a TLS handshake regardless of the URL
+// string, so it can't talk to a plain HTTP server.
+const char* BACKEND_HOST  = "https://srpt.up.railway.app";
 
-// Base URL only (no trailing slash) — e.g. "http://192.168.1.50:3001"
-// or "https://your-backend.railway.app"
-const char* BACKEND_HOST  = "http://172.20.10.10:3001";
-
-// Must match ESP32_API_KEY in backend/.env
+// Must match ESP32_API_KEY in backend/.env (and in Railway's Variables tab,
+// once deployed there).
 const char* ESP32_API_KEY = "srpt";
 
 const unsigned long BACKEND_POLL_INTERVAL_MS = 1000;  // how often to read phase/fold state
 const unsigned long BACKEND_PUSH_INTERVAL_MS = 1000;  // how often to push cards/odds
+
+// Shared across both backend calls below rather than a fresh WiFiClientSecure
+// per request — setInsecure() skips TLS certificate validation (the request
+// is still encrypted, just not verifying the server's identity), which is a
+// deliberate simplification appropriate for this project rather than
+// embedding/maintaining a pinned CA certificate for Railway's TLS chain.
+WiFiClientSecure backendSecureClient;
 
 // ============================================================
 // PN5180 Commands and Registers
@@ -1491,7 +1514,24 @@ void connectToWiFi() {
   Serial.println(WIFI_SSID);
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // If the network's channel changes mid-session, the connection drops —
+  // auto-reconnect brings it back on whatever channel it's actually on
+  // now, rather than needing a manual power cycle. ESP-NOW's peer
+  // channel=0 setting then just follows along.
+  WiFi.setAutoReconnect(true);
+
+  // UCF_WPA2 is WPA2-Enterprise — a plain WiFi.begin(ssid, password) only
+  // does WPA2-Personal (PSK) and will never authenticate here. This is the
+  // standard ESP-IDF enterprise (802.1X/PEAP) sequence: set the
+  // identity/username/password, enable enterprise mode, then connect by
+  // SSID only (no password argument — the credentials above are what
+  // actually authenticate).
+  esp_wifi_disconnect();
+  esp_eap_client_set_identity((const uint8_t *)ENTERPRISE_IDENTITY, strlen(ENTERPRISE_IDENTITY));
+  esp_eap_client_set_username((const uint8_t *)ENTERPRISE_USERNAME, strlen(ENTERPRISE_USERNAME));
+  esp_eap_client_set_password((const uint8_t *)ENTERPRISE_PASSWORD, strlen(ENTERPRISE_PASSWORD));
+  esp_wifi_sta_enterprise_enable();
+  WiFi.begin(WIFI_SSID);
 
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
@@ -1505,18 +1545,6 @@ void connectToWiFi() {
     Serial.println(WiFi.localIP());
     Serial.print("WiFi channel: ");
     Serial.println(WiFi.channel());
-
-    if (WiFi.channel() != WIFI_CHANNEL) {
-      Serial.println();
-      Serial.println("*** WARNING: router's actual channel does not match the WIFI_CHANNEL");
-      Serial.printf("*** constant (router is on %d, WIFI_CHANNEL is set to %d).\n",
-                    WiFi.channel(), WIFI_CHANNEL);
-      Serial.println("*** Player boards will NOT be able to reach this board over ESP-NOW");
-      Serial.println("*** until WIFI_CHANNEL is updated to match here AND in");
-      Serial.println("*** players_esp_code.ino, and every board is reflashed — or the");
-      Serial.println("*** router is pinned to a fixed channel matching WIFI_CHANNEL.");
-      Serial.println();
-    }
 
     // Disable WiFi power-save (modem sleep). While connected to an AP like
     // this, the ESP32 periodically powers its radio down between the AP's
@@ -1784,7 +1812,7 @@ bool fetchBackendState() {
 
   HTTPClient http;
   String url = String(BACKEND_HOST) + "/api/esp32/state";
-  http.begin(url);
+  http.begin(backendSecureClient, url);
   http.addHeader("x-api-key", ESP32_API_KEY);
 
   int code = http.GET();
@@ -1901,7 +1929,7 @@ void pushGameStateToBackend() {
 
   HTTPClient http;
   String url = String(BACKEND_HOST) + "/api/esp32/update";
-  http.begin(url);
+  http.begin(backendSecureClient, url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-api-key", ESP32_API_KEY);
 
@@ -2040,6 +2068,12 @@ void setup() {
 
   // Connect to WiFi BEFORE ESP-NOW init so both ride on the same channel.
   connectToWiFi();
+
+  // Skip TLS certificate validation for the backend connection (still
+  // encrypted, just not verifying the server's identity) — see
+  // backendSecureClient's comment above for why.
+  backendSecureClient.setInsecure();
+
   initEspNow();
   clearRoundDataOnly();
 

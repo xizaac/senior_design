@@ -19,6 +19,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <esp_eap_client.h>
 
 // ============================================================
 // Debug mode
@@ -27,16 +28,27 @@
 
 // ESP-NOW requires both ends of a link to be on the EXACT same WiFi
 // channel — a mismatch means packets are never seen at all in either
-// direction, no matter how strong the signal is, which looks identical to
-// a wiring/MAC-address problem and is easy to chase the wrong thing for.
-// This board never joins the real WiFi network (it only speaks ESP-NOW),
-// so left alone it just sits on whatever channel the radio happens to
-// power up on — which has no reason to match the main board's actual
-// channel (decided by the router it connects to). This MUST be set to
-// whatever channel the main board's Serial Monitor prints on boot (see
-// WIFI_CHANNEL in poker_table.ino) — reflash every player board any time
-// that changes, e.g. if the router's channel changes.
-const int WIFI_CHANNEL = 6;
+// direction, no matter how strong the signal is. This board never used to
+// join the real WiFi network (it only speaks ESP-NOW), so it just sat on
+// whatever channel the radio happened to power up on. Joining the same
+// network the main board does means this board's channel is never a
+// guess — it's whatever the network is actually on, checked fresh at boot
+// and re-checked automatically for the rest of the session (see
+// connectToWiFiForChannel() below).
+//
+// UCF_WPA2 is WPA2-Enterprise (802.1X/PEAP), not a plain PSK network —
+// must match the main board's WIFI_SSID/ENTERPRISE_* credentials in
+// poker_table.ino exactly.
+const char* WIFI_SSID           = "UCF_WPA2";
+const char* ENTERPRISE_IDENTITY = "di746193";
+const char* ENTERPRISE_USERNAME = "di746193";
+const char* ENTERPRISE_PASSWORD = "Dasm23052004";
+
+// Last-resort fallback ONLY if this board can't reach WIFI_SSID at boot —
+// in that case there's no way to learn the real channel dynamically, so it
+// at least tries the last channel known to have worked rather than
+// whatever the radio defaults to.
+const int WIFI_CHANNEL_FALLBACK = 6;
 
 // ============================================================
 // ESP32 Pin Definitions
@@ -871,25 +883,62 @@ void onDataReceived(const esp_now_recv_info_t *recvInfo,
   Serial.printf("Unknown packet received. Length: %d\n", len);
 }
 
-void initEspNow() {
+// Joins WIFI_SSID so this board's ESP-NOW channel is always the network's
+// REAL current channel — never a hardcoded guess. Staying connected (not
+// disconnecting once the channel is known) is what makes this self-healing
+// for the rest of the session too: if the hotspot switches channels later,
+// this connection drops, WiFi auto-reconnects (enabled below) wherever the
+// network actually is now, and ESP-NOW (peerInfo.channel = 0 below, "use
+// whatever channel I'm currently on") follows right along.
+void connectToWiFiForChannel() {
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
 
-  // Lock onto WIFI_CHANNEL before anything else — see its comment above.
-  // Without this, this board sits on whatever channel it happens to power
-  // up on (in practice, channel 1), with no reason to match the main
-  // board's actual channel.
-  esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  Serial.print("Connecting to WiFi to learn its channel: ");
+  Serial.println(WIFI_SSID);
+
+  // UCF_WPA2 is WPA2-Enterprise — see poker_table.ino's connectToWiFi() for
+  // why this needs the enterprise sequence instead of a plain
+  // WiFi.begin(ssid, password).
+  esp_wifi_disconnect();
+  esp_eap_client_set_identity((const uint8_t *)ENTERPRISE_IDENTITY, strlen(ENTERPRISE_IDENTITY));
+  esp_eap_client_set_username((const uint8_t *)ENTERPRISE_USERNAME, strlen(ENTERPRISE_USERNAME));
+  esp_eap_client_set_password((const uint8_t *)ENTERPRISE_PASSWORD, strlen(ENTERPRISE_PASSWORD));
+  esp_wifi_sta_enterprise_enable();
+  WiFi.begin(WIFI_SSID);
+
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
+    delay(250);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.print("Connected. WiFi channel: ");
+    Serial.println(WiFi.channel());
+  } else {
+    Serial.println();
+    Serial.printf("Could not connect to WiFi — falling back to channel %d. "
+                  "ESP-NOW will likely fail until this board can reach \"%s\" "
+                  "to learn the real channel.\n",
+                  WIFI_CHANNEL_FALLBACK, WIFI_SSID);
+    esp_wifi_set_channel(WIFI_CHANNEL_FALLBACK, WIFI_SECOND_CHAN_NONE);
+  }
 
   // Disable WiFi power-save (modem sleep) — by default the ESP32's radio
-  // periodically powers down even without an AP connection, which is a
-  // well-known cause of exactly the symptom seen here: a send occasionally
-  // reported as failed (its ACK missed while the radio was asleep) even
-  // though the main board actually received it fine, and — separately —
-  // incoming packets (like a RESET) sometimes just never arriving either,
-  // since ESP-NOW rides on the same radio and is subject to the same sleep
-  // cycle either side of the link. No real downside on a table unit like
-  // this.
+  // periodically powers down even while connected, which is a well-known
+  // cause of exactly the symptom seen here: a send occasionally reported
+  // as failed (its ACK missed while the radio was asleep) even though the
+  // main board actually received it fine, and — separately — incoming
+  // packets (like a RESET) sometimes just never arriving either, since
+  // ESP-NOW rides on the same radio and is subject to the same sleep cycle
+  // either side of the link. No real downside on a table unit like this.
   WiFi.setSleep(false);
+}
+
+void initEspNow() {
+  connectToWiFiForChannel();
 
   WiFi.setTxPower(WIFI_POWER_2dBm);
   delay(500);
