@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import PlayerSeat from "./PlayerSeat";
 import PlayingCard from "./PlayingCard";
+import ScaleToWidth from "./ScaleToWidth";
 
 export const PHASE_LABELS = {
   idle: "Waiting to start",
@@ -162,6 +163,64 @@ const FeltTable = ({ left, top, width, height, phase, communityCards, pot, curre
   );
 };
 
+// Natural (unscaled) width of the community-card row at the same "lg" card
+// size FeltTable uses at its base scale — the reference ScaleToWidth shrinks
+// CompactCommunityBox's card row down from.
+const COMMUNITY_ROW_NATURAL_WIDTH = 5 * 118 + 4 * 16;
+
+/**
+ * CompactCommunityBox — flat rectangular stand-in for FeltTable, used in
+ * spectator mode once there isn't enough width for an oval table to render
+ * both round-looking AND legible (see SPECTATOR_COMPACT_FELT_THRESHOLD).
+ * Below that width, a real ellipse gets crushed into a tall sliver with the
+ * card row squeezed into a tiny cluster and a lot of unusable elliptical
+ * margin at the tips — a plain rounded rectangle (matching the player
+ * boxes' visual language) sidesteps that shape problem entirely and uses
+ * the same space more usefully.
+ */
+const CompactCommunityBox = ({ left, top, width, height, phase, communityCards, pot, currentBet }) => (
+  <div
+    className="absolute rounded-2xl flex flex-col items-center justify-center gap-2 px-3 py-2"
+    style={{
+      left,
+      top,
+      width,
+      height,
+      background: "rgba(255,255,255,0.04)",
+      border: "1px solid rgba(212,168,67,0.2)",
+      boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+    }}
+  >
+    <div
+      className="px-3 py-1 rounded-full text-xs font-mono font-semibold tracking-widest uppercase flex-shrink-0"
+      style={{ background: "rgba(212,168,67,0.15)", border: "1px solid rgba(212,168,67,0.3)", color: "#d4a843" }}
+    >
+      {PHASE_LABELS[phase] || phase}
+    </div>
+
+    <div className="w-full flex-1 min-h-0 flex items-center justify-center">
+      <ScaleToWidth naturalWidth={COMMUNITY_ROW_NATURAL_WIDTH}>
+        <div className="flex gap-4 items-center justify-center">
+          {Array.from({ length: 5 }, (_, i) => {
+            const card = communityCards[i];
+            return <PlayingCard key={i} rank={card?.rank} suit={card?.suit} size="lg" delay={i * 80} />;
+          })}
+        </div>
+      </ScaleToWidth>
+    </div>
+
+    <div className="flex items-center gap-3 flex-shrink-0">
+      <div className="text-center leading-tight">
+        <div className="text-[9px] text-white/40 uppercase tracking-widest leading-none">Pot</div>
+        <div className="font-display font-bold" style={{ color: "#d4a843", fontSize: "1.1rem" }}>
+          ${pot.toLocaleString()}
+        </div>
+      </div>
+      {currentBet > 0 && <div className="text-xs text-white/50 font-mono">Bet: ${currentBet}</div>}
+    </div>
+  </div>
+);
+
 /**
  * PokerTable — 4 player seats pinned to the corners of whatever space this
  * component is given, with the felt table filling the leftover space between
@@ -202,6 +261,7 @@ const PokerTable = ({ gameState, variant = "dealer" }) => {
     feltTop: 0,
     feltWidth: FELT_BASE_WIDTH,
     feltHeight: FELT_BASE_HEIGHT,
+    useCompactCommunityBox: false,
   });
 
   useLayoutEffect(() => {
@@ -335,45 +395,73 @@ const PokerTable = ({ gameState, variant = "dealer" }) => {
       // have used anyway, leaving a properly-proportioned oval instead.
       const availableForFeltWidthArea = availW - leftColW - rightColW - gap * 2 - outerPadding * 2;
       const feltWidthCandidate = Math.max(60, availableForFeltWidthArea);
-
-      const feltHeightCeiling =
-        variant === "spectator"
-          ? Math.max(ABS_MIN_FELT_HEIGHT, feltWidthCandidate / TARGET_ASPECT)
-          : MIN_FELT_HEIGHT * DEALER_FELT_GROWTH;
-      const feltWidthCeiling =
-        variant === "spectator" ? Infinity : MIN_FELT_HEIGHT * DEALER_FELT_GROWTH * MAX_FELT_ASPECT;
-
       const availableForFeltHeight = availH - topRowH - bottomRowH - gap * 2 - outerPadding * 2;
-      const feltHeight = Math.min(feltHeightCeiling, Math.max(40, availableForFeltHeight));
 
-      // Cap the felt's width at MAX_FELT_ASPECT times its height instead of
-      // always filling 100% of the leftover width — otherwise, since there's
-      // usually much more spare width than height, it stretches into a
-      // razor-thin ellipse rather than a recognizable table shape. Set well
-      // above TARGET_ASPECT (the content's own, narrower proportions) so it
-      // only kicks in once the table would otherwise get unreasonably flat,
-      // not as soon as it stops matching the content's exact shape.
-      const feltAreaWidth = Math.min(feltWidthCeiling, feltWidthCandidate);
-      const feltWidth = Math.min(feltAreaWidth, feltHeight * MAX_FELT_ASPECT, availableForFeltWidthArea);
+      // Below this width, no aspect-ratio cap saves the oval — there just
+      // isn't room for a shape that's both round-looking and legible, and
+      // real devices have shown genuine rendering trouble with border-radius
+      // ellipses at extreme aspect ratios that didn't reproduce in headless
+      // testing. Spectator mode swaps in CompactCommunityBox (a plain
+      // rectangle, same visual language as the player boxes) instead of
+      // fighting the ellipse further. Dealer is untouched — it never asked
+      // for this and its fixed growth target doesn't get this narrow.
+      const SPECTATOR_COMPACT_FELT_THRESHOLD = 260;
+      const useCompactCommunityBox = variant === "spectator" && feltWidthCandidate < SPECTATOR_COMPACT_FELT_THRESHOLD;
 
-      // Spectator's height cap (above) now often leaves real leftover
-      // vertical room beyond the felt's own capped height, on a
-      // narrow/tall screen — center the felt within that space instead of
-      // pinning it flush under the top row, so the reclaimed space reads
-      // as balanced breathing room rather than an odd gap dumped entirely
-      // below the table. Dealer keeps its exact previous flush-top
-      // positioning (it has its own fixed growth target, not this cap).
-      const feltTop =
-        variant === "spectator"
-          ? outerPadding + topRowH + gap + (availableForFeltHeight - feltHeight) / 2
-          : outerPadding + topRowH + gap;
-      // Center the (possibly narrower-than-available) felt within its
-      // horizontal area rather than pinning it flush left, so capping the
-      // width for roundness doesn't leave it looking off-center.
-      const feltAreaLeft = outerPadding + leftColW + gap;
-      const feltLeft = feltAreaLeft + (availableForFeltWidthArea - feltWidth) / 2;
+      let feltHeight, feltWidth, feltTop, feltLeft;
 
-      setLayout({ cornerScale, feltLeft, feltTop, feltWidth, feltHeight });
+      if (useCompactCommunityBox) {
+        // Unlike the oval (which spans the full height between the corner
+        // rows and so must stay clear of both columns at every row), this
+        // box is short and sits entirely within the empty middle band
+        // between the top and bottom corner rows — the corner columns
+        // don't reach into that band at all, so it can use the FULL
+        // available width instead of just the narrow leftover gap between
+        // them. That gap (feltWidthCandidate) is exactly why 5 cards
+        // couldn't fit at any legible size in the first place.
+        feltWidth = Math.max(60, availW - outerPadding * 2);
+        feltHeight = Math.min(Math.max(40, availableForFeltHeight), 180);
+        feltTop = outerPadding + topRowH + gap + (availableForFeltHeight - feltHeight) / 2;
+        feltLeft = outerPadding;
+      } else {
+        const feltHeightCeiling =
+          variant === "spectator"
+            ? Math.max(ABS_MIN_FELT_HEIGHT, feltWidthCandidate / TARGET_ASPECT)
+            : MIN_FELT_HEIGHT * DEALER_FELT_GROWTH;
+        const feltWidthCeiling =
+          variant === "spectator" ? Infinity : MIN_FELT_HEIGHT * DEALER_FELT_GROWTH * MAX_FELT_ASPECT;
+
+        feltHeight = Math.min(feltHeightCeiling, Math.max(40, availableForFeltHeight));
+
+        // Cap the felt's width at MAX_FELT_ASPECT times its height instead of
+        // always filling 100% of the leftover width — otherwise, since there's
+        // usually much more spare width than height, it stretches into a
+        // razor-thin ellipse rather than a recognizable table shape. Set well
+        // above TARGET_ASPECT (the content's own, narrower proportions) so it
+        // only kicks in once the table would otherwise get unreasonably flat,
+        // not as soon as it stops matching the content's exact shape.
+        const feltAreaWidth = Math.min(feltWidthCeiling, feltWidthCandidate);
+        feltWidth = Math.min(feltAreaWidth, feltHeight * MAX_FELT_ASPECT, availableForFeltWidthArea);
+
+        // Spectator's height cap (above) now often leaves real leftover
+        // vertical room beyond the felt's own capped height, on a
+        // narrow/tall screen — center the felt within that space instead of
+        // pinning it flush under the top row, so the reclaimed space reads
+        // as balanced breathing room rather than an odd gap dumped entirely
+        // below the table. Dealer keeps its exact previous flush-top
+        // positioning (it has its own fixed growth target, not this cap).
+        feltTop =
+          variant === "spectator"
+            ? outerPadding + topRowH + gap + (availableForFeltHeight - feltHeight) / 2
+            : outerPadding + topRowH + gap;
+        // Center the (possibly narrower-than-available) felt within its
+        // horizontal area rather than pinning it flush left, so capping the
+        // width for roundness doesn't leave it looking off-center.
+        const feltAreaLeft = outerPadding + leftColW + gap;
+        feltLeft = feltAreaLeft + (availableForFeltWidthArea - feltWidth) / 2;
+      }
+
+      setLayout({ cornerScale, feltLeft, feltTop, feltWidth, feltHeight, useCompactCommunityBox });
     };
 
     recompute();
@@ -403,7 +491,8 @@ const PokerTable = ({ gameState, variant = "dealer" }) => {
     return null;
   };
 
-  const { cornerScale, feltLeft, feltTop, feltWidth, feltHeight } = layout;
+  const { cornerScale, feltLeft, feltTop, feltWidth, feltHeight, useCompactCommunityBox } = layout;
+  const FeltComponent = useCompactCommunityBox ? CompactCommunityBox : FeltTable;
 
   return (
     <div className="w-full h-full" style={{ padding: variant === "spectator" ? 2 : OUTER_PADDING }}>
@@ -448,7 +537,7 @@ const PokerTable = ({ gameState, variant = "dealer" }) => {
           </div>
         </div>
 
-        <FeltTable
+        <FeltComponent
           left={feltLeft}
           top={feltTop}
           width={feltWidth}
